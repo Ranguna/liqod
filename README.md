@@ -15,6 +15,15 @@ All help is appreciated :)
 
 **Demo**
 
-By compiling the main.lua code use the left button to spawn particles and the escape key to close. 
-The demo also works on mobile and it supports multitouch but it's kinda slow.
+By compiling the main.lua code use:
+* Left button to spawn particles
+* "b" key to change between boundaries
+* "g" key to change gravity
+* "w" key to change the type of gravity/water
+* Escape key to close
 
+The demo also works on mobile and it supports multitouch but it's kinda slow:
+* Screen press to spawn particles
+* Bottom left screen press to change between boundaries
+* Bottom right screen press to change gravity
+* Upper left screen press to change the type of gravity/water

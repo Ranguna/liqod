@@ -11,9 +11,13 @@ end
 
 liquid._vars = {}
 liquid._vars.touch = love.system.getOS() == 'Android' and {}
+liquid._vars.threads = {}
+-----
 liquid._vars.maxParticles = 1000
 liquid._vars.radius = 0.6
 liquid._vars.viscosity = 0.0004 --.0004 water, .004 blobish, .04 elastic
+liquid._vars.roughWaters = false
+liquid._vars.gravity = {0,0}
 -----
 liquid._vars.scale = 32
 liquid._vars.idealRadius = 50
@@ -135,6 +139,7 @@ end
 function liquid.newParticle(position,velocity,alive)
 	local particle = {}
 	particle.position = position
+	particle.oldPosition = position
 	particle.velocity = velocity
 	particle.pressure = 0
 	particle.alive = alive
@@ -179,7 +184,7 @@ function liquid.init()
 	end
 end
 
-function liquid.settings(...) --mp,r,v,nc or {mp=mp,r=r,v=v,nc=nc} or {mp,r,v,nc}
+function liquid.settings(...) --mp,r,v,mn,pu,grv,rw or {mp=mp,r=r,v=v,mn=mn,pu=pu,grv=grv,rw} or {mp,r,v,mn,pu,grv,rw}
 	args = {...}
 	if #args == 1 then
 		args = args[1]
@@ -191,6 +196,8 @@ function liquid.settings(...) --mp,r,v,nc or {mp=mp,r=r,v=v,nc=nc} or {mp,r,v,nc
 	--liquid._vars.viscosity = args.viscosity and (args.viscosity*love.graphics.getHeight())/600 or args[3] and (args[3]*love.graphics.getHeight())/600 or (liquid._vars.viscosity*love.graphics.getHeight())/600
 	liquid._vars.maxNeighbors = args.maxNeighbors or args[4] or liquid._vars.maxNeighbors
 	liquid._vars.postUpdate = args.postUpdate or args[5] or nil
+	liquid._vars.gravity = args.gravity or args[6] or liquid._vars.gravity
+	liquid._vars.roughWaters = args.roughWaters or args[7] or liquid._vars.roughWaters
 
 	--liquid._vars.scale = (32*love.graphics.getHeight())/600
 	liquid._vars.scale = ((liquid._vars.radius*32)/(0.6))
@@ -208,6 +215,8 @@ function liquid.settings(...) --mp,r,v,nc or {mp=mp,r=r,v=v,nc=nc} or {mp,r,v,nc
 end
 
 function liquid.applyLiquidConstraints(dt)
+	local velGrav = {not liquid._vars.roughWaters and liquid._vars.gravity[1] or 0,not liquid._vars.roughWaters and liquid._vars.gravity[2] or 0} --optimizations
+	local deltaGrav = {liquid._vars.roughWaters and liquid._vars.gravity[1] or 0,liquid._vars.roughWaters and liquid._vars.gravity[2] or 0} --optimizations
 	liquid._vars.debug = {}
 	liquid._vars.debug[1] = {name = 'First loop',os.clock()}
 	for i = 1,liquid._vars.numActiveParticles do
@@ -267,13 +276,13 @@ function liquid.applyLiquidConstraints(dt)
 
 				factor = liquid._vars.viscosity * oneminusq*dt
 				d = {d[1] - (relativeVelocity[1]*factor),d[2] - (relativeVelocity[2]*factor)}
-				liquid._vars.delta[v] = {liquid._vars.delta[v][1] + d[1],liquid._vars.delta[v][2] + d[2]}
+				liquid._vars.delta[v] = {liquid._vars.delta[v][1] + d[1]+deltaGrav[1],liquid._vars.delta[v][2] + d[2]+deltaGrav[2]}
 				change = {change[1]-d[1],change[2]-d[2]}
 			end
 		end
 		liquid._vars.debug[4][2] = os.clock()
 		liquid._vars.delta[index] = {liquid._vars.delta[index][1] + change[1],liquid._vars.delta[index][2] + change[2]}
-		liquid._vars.liquid[index].velocity = {liquid._vars.liquid[index].velocity[1],liquid._vars.liquid[index].velocity[2]+.0}
+		liquid._vars.liquid[index].velocity = {liquid._vars.liquid[index].velocity[1]+velGrav[1],liquid._vars.liquid[index].velocity[2]+velGrav[2]}
 	end
 	liquid._vars.debug[1][2] = os.clock()
 
@@ -281,19 +290,22 @@ function liquid.applyLiquidConstraints(dt)
 	for i = 1,liquid._vars.numActiveParticles do
 		local index = liquid._vars.activeParticles[i]
 		particle = liquid._vars.liquid[index]
-
+		
+		particle.oldPosition = particle.position
 		particle.position = {particle.position[1] + (liquid._vars.delta[index][1]/liquid._vars.multiplier),particle.position[2] + (liquid._vars.delta[index][2]/liquid._vars.multiplier)}
 		particle.velocity = {particle.velocity[1] + (liquid._vars.delta[index][1]/(liquid._vars.multiplier*dt)),particle.velocity[2] + (liquid._vars.delta[index][2]/(liquid._vars.multiplier*dt))}
 		particle.position = {particle.position[1] + (liquid._vars.liquid[index].velocity[1]/liquid._vars.multiplier),particle.position[2] + (liquid._vars.liquid[index].velocity[2]/liquid._vars.multiplier)}
+
+		if liquid._vars.postUpdate then liquid._vars.postUpdate(i) end
 
 		local x,y = liquid._vars.grid.transformCoord(particle.position[1]),liquid._vars.grid.transformCoord(particle.position[2])
 		if x ~= particle.grid[1] or y ~= particle.grid[2] then
 			--print('count on '..particle.grid[2],liquid._vars.grid[particle.grid[1]][particle.grid[2]].count)
 			--print('sending '..particle.grid[1],particle.grid[2],index)
 			liquid._vars.grid.remove(particle.grid[1],particle.grid[2],index)
-			if liquid._vars.grid[particle.grid[1]][particle.grid[2]].count == 0 then
+			if liquid._vars.grid[particle.grid[1] ][particle.grid[2] ].count == 0 then
 				liquid._vars.grid.remove(particle.grid[1],particle.grid[2])
-				if liquid._vars.grid[particle.grid[1]].count == 0 then
+				if liquid._vars.grid[particle.grid[1] ].count == 0 then
 					liquid._vars.grid.remove(particle.grid[1])
 				end
 			end
@@ -303,13 +315,6 @@ function liquid.applyLiquidConstraints(dt)
 		end
 	end
 	liquid._vars.debug[5][2] = os.clock()
-	if liquid._vars.postUpdate then
-		for i,v in ipairs(liquid._vars.liquid) do
-			if v.alive then
-				liquid._vars.postUpdate(i)
-			end
-		end
-	end
 end
 
 function liquid.createParticle(x,y,n)
@@ -354,15 +359,66 @@ function liquid.getParticlePosition(i)
 	end
 end
 
-function liquid.moveParticle(i,x,y)
+function liquid.getOldParticlePosition(i)
+	if liquid._vars.liquid[i] then
+		return liquid._vars.liquid[i].oldPosition[1] * liquid._vars.scale,liquid._vars.liquid[i].oldPosition[2] * liquid._vars.scale
+	end
+end
+
+function liquid.getParticleVelocity(i)
+	if liquid._vars.liquid[i] then
+		return liquid._vars.liquid[i].velocity[1],liquid._vars.liquid[i].velocity[2]
+	end
+end
+
+function liquid.getGravity(...) --x,y, {x,y}
+	return liquid._vars.gravity[1],liquid._vars.gravity[2]
+end
+
+function liquid.moveParticle(i,x,y,updtGrid)
 	if liquid._vars.liquid[i] then
 		if liquid._vars.liquid[i].alive then
 			x,y = x and x/liquid._vars.scale or liquid._vars.liquid[i].position[1], y and y/liquid._vars.scale or liquid._vars.liquid[i].position[2]
 			liquid._vars.liquid[i].position = {x,y}
+
+			if updtGrid then
+				local x,y = liquid._vars.grid.transformCoord(liquid._vars.liquid[i].position[1]),liquid._vars.grid.transformCoord(liquid._vars.liquid[i].position[2])
+				if x ~= liquid._vars.liquid[i].grid[1] or y ~= liquid._vars.liquid[i].grid[2] then
+					--print('count on '..liquid._vars.liquid[i].grid[2],liquid._vars.grid[liquid._vars.liquid[i].grid[1]][liquid._vars.liquid[i].grid[2]].count)
+					--print('sending '..liquid._vars.liquid[i].grid[1],liquid._vars.liquid[i].grid[2],index)
+					liquid._vars.grid.remove(liquid._vars.liquid[i].grid[1],liquid._vars.liquid[i].grid[2],i)
+					if liquid._vars.grid[liquid._vars.liquid[i].grid[1]][liquid._vars.liquid[i].grid[2]].count == 0 then
+						liquid._vars.grid.remove(liquid._vars.liquid[i].grid[1],liquid._vars.liquid[i].grid[2])
+						if liquid._vars.grid[liquid._vars.liquid[i].grid[1]].count == 0 then
+							liquid._vars.grid.remove(liquid._vars.liquid[i].grid[1])
+						end
+					end
+					--print('sending to add '..x,y,index)
+					liquid._vars.grid.add(x,y,index)
+					liquid._vars.liquid[i].grid = {x,y}
+				end
+			end
 		end
 	end
 end
 
+function liquid.changeVelocity(i,x,y)
+	if liquid._vars.liquid[i] then
+		if liquid._vars.liquid[i].alive then
+			x,y = x or liquid._vars.liquid[i].velocity[1], y or liquid._vars.liquid[i].velocity[2]
+			liquid._vars.liquid[i].velocity = {x,y}
+		end
+	end
+end
+
+function liquid.setGravity(...) --x,y, {x,y}
+	gVec = {...}
+	if #gVec == 1 then
+		gVec = gVec[1]
+	end
+
+	liquid._vars.gravity = {gVec[1],gVec[2]}
+end
 
 
 
@@ -403,6 +459,7 @@ if love.system.getOS() == 'Android' or love.system.getOS() == 'iOS' then
 			 return
 			end
 		end
+		collectgarbage()
 	end
 	
 	function liquid.touchmoved(id,x,y,p)
